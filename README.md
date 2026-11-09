@@ -1,5 +1,7 @@
 # Smart Attendance
 
+Install and daily operations: [Install guide and SOP](docs/INSTALL_AND_SOP.md).
+
 Self-hosted attendance and academy register for one Ubuntu 24.04 server. Each organization is a tenant. Photos, face embeddings, attendance, and reports for one organization are not readable by another.
 
 Version 1 runs the whole stack with Docker Compose: FastAPI, a separate face engine, React, Nginx, PostgreSQL 16 with pgvector and row-level security, Redis, Celery, and Ollama (`qwen2.5:7b`) behind an internal AI service.
