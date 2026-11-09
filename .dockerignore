@@ -1,0 +1,11 @@
+.git
+data
+models
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.pyc
+frontend/dist
+uploads
+*.md
+!frontend/README.md
