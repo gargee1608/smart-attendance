@@ -1,0 +1,15 @@
+.env
+data/
+models/*.onnx
+models/*.partial
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.mypy_cache/
+node_modules/
+frontend/dist/
+*.log
+.DS_Store
+backups/
+*.tar.gz
+*.tar.gz.enc

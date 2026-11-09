@@ -1,0 +1,141 @@
+name: smartattendance
+
+x-app-env: &app-env
+  SMARTATTENDANCE_ENV: ${SMARTATTENDANCE_ENV:-development}
+  DATABASE_URL: postgresql+psycopg://smartattendance_app:${APP_DB_PASSWORD:-devappdb}@postgres:5432/smartattendance
+  ADMIN_DATABASE_URL: postgresql+psycopg://smartattendance_admin:${ADMIN_DB_PASSWORD:-devadmindb}@postgres:5432/smartattendance
+  MIGRATION_DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-devpostgres}@postgres:5432/smartattendance
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me}
+  FILE_ENCRYPTION_KEY: ${FILE_ENCRYPTION_KEY:-ZGV2LW9ubHktZmlsZS1rZXktbm90LWZvci1wcm9kISE=}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:-devappdb}
+  ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:-devadmindb}
+  INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@smartattendance.local}
+  INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-ChangeMe-Admin-1}
+  STORAGE_ROOT: /data/storage
+  FACE_ENGINE_URL: http://face-engine:8090
+  AI_SERVICE_URL: http://ai-service:8091
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:18480}
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpostgres}
+      POSTGRES_DB: smartattendance
+    volumes:
+      - ${DATA_ROOT:-./data}/database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smartattendance"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${DATA_ROOT:-./data}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["python", "-m", "app.cli", "migrate-and-ensure-admin"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT:-./data}/storage:/data/storage
+      - ${DATA_ROOT:-./data}/logs:/data/logs
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["celery", "-A", "app.worker.celery", "worker", "--loglevel=info"]
+    environment: *app-env
+    volumes:
+      - ${DATA_ROOT:-./data}/storage:/data/storage
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  face-engine:
+    build:
+      context: .
+      dockerfile: ai_engine/Dockerfile
+    environment:
+      MODEL_DIR: /models
+    volumes:
+      - ./models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      OLLAMA_KEEP_ALIVE: "0"
+    volumes:
+      - ${DATA_ROOT:-./data}/ollama:/root/.ollama
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    ports:
+      - "${PUBLIC_HTTP_PORT:-18480}:80"
+      - "${PUBLIC_HTTPS_PORT:-18443}:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
